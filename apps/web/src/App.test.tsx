@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { App } from './App'
 
 describe('App', () => {
+  console.log('Firebase ID:', import.meta.env.VITE_FIREBASE_PROJECT_ID)
+
   it('renders the header with title', () => {
     render(<App />)
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('The Hytel Way')
