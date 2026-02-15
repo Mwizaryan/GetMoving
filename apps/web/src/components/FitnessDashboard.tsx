@@ -32,19 +32,19 @@ import { ActiveSession } from './ActiveSession'
 
 const EXERCISES = {
   upper: [
-    { id: 'pushups', name: 'Push-ups' },
-    { id: 'arm-circles', name: 'Arm Circles' },
-    { id: 'plank-taps', name: 'Plank Shoulder Taps' },
+    { id: 'pushups', exerciseName: 'Push-ups' },
+    { id: 'arm-circles', exerciseName: 'Arm Circles' },
+    { id: 'plank-taps', exerciseName: 'Plank Shoulder Taps' },
   ],
   abs: [
-    { id: 'situps', name: 'Sit-Ups' },
-    { id: 'leg-raises', name: 'Leg Raises' },
-    { id: 'plank-hold', name: 'Plank Hold' },
+    { id: 'situps', exerciseName: 'Sit-Ups' },
+    { id: 'leg-raises', exerciseName: 'Leg Raises' },
+    { id: 'plank-hold', exerciseName: 'Plank Hold' },
   ],
   legs: [
-    { id: 'squats', name: 'Squats' },
-    { id: 'lunges', name: 'Lunges' },
-    { id: 'calf-raises', name: 'Calf Raises' },
+    { id: 'squats', exerciseName: 'Squats' },
+    { id: 'lunges', exerciseName: 'Lunges' },
+    { id: 'calf-raises', exerciseName: 'Calf Raises' },
   ],
 }
 
@@ -342,14 +342,16 @@ export default function FitnessDashboard() {
                       <Card
                         key={exercise.id}
                         className={`cursor-pointer transition-all hover:bg-accent ${
-                          selectedExercise === exercise.name
+                          selectedExercise === exercise.exerciseName
                             ? 'border-primary ring-2 ring-primary'
                             : ''
                         }`}
-                        onClick={() => setSelectedExercise(exercise.name)}
+                        onClick={() => setSelectedExercise(exercise.exerciseName)}
                       >
                         <CardHeader className="p-4">
-                          <CardTitle className="text-lg text-center">{exercise.name}</CardTitle>
+                          <CardTitle className="text-lg text-center">
+                            {exercise.exerciseName}
+                          </CardTitle>
                         </CardHeader>
                       </Card>
                     ))}
