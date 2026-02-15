@@ -27,7 +27,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react'
-import { format } from 'date-fns'
+import { format, subDays } from 'date-fns'
 import { ActiveSession } from './ActiveSession'
 
 const EXERCISES = {
@@ -60,8 +60,8 @@ export default function FitnessDashboard() {
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([])
   const [totalWorkouts, setTotalWorkouts] = useState(0)
   const [lastActive, setLastActive] = useState<Date | null>(null)
+  const [streak, setStreak] = useState(0)
 
-  // Fetch workout stats
   useEffect(() => {
     const fetchWorkoutStats = async () => {
       if (!auth.currentUser) return
@@ -75,404 +75,306 @@ export default function FitnessDashboard() {
         const querySnapshot = await getDocs(q)
         const workouts: WorkoutSession[] = []
 
-        querySnapshot.forEach(doc => {
-          const data = doc.data()
-          // Filter out soft-deleted items
+        querySnapshot.forEach(docSnap => {
+          const data = docSnap.data()
           if (data.isDeleted !== true) {
             workouts.push({
-              id: doc.id,
+              id: docSnap.id,
               ownerId: data.ownerId,
-              exerciseName: data.exerciseName,
+              exerciseName: data.exerciseName || data.exercise || 'Unknown',
               sets: data.sets,
               reps: data.reps,
               weight: data.weight,
               timestamp: data.timestamp.toDate(),
-              isDeleted: data.isDeleted,
+              isDeleted: !!data.isDeleted,
             })
           }
         })
 
         setWorkoutHistory(workouts)
         setTotalWorkouts(workouts.length)
+
         if (workouts.length > 0) {
           setLastActive(workouts[0].timestamp)
+
+          const uniqueDates = workouts
+            .map(w => format(w.timestamp, 'yyyy-MM-dd'))
+            .filter((value, index, self) => self.indexOf(value) === index)
+
+          let currentStreak = 0
+          const today = format(new Date(), 'yyyy-MM-dd')
+          const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
+
+          if (uniqueDates.includes(today) || uniqueDates.includes(yesterday)) {
+            let checkDate = uniqueDates.includes(today) ? new Date() : subDays(new Date(), 1)
+
+            while (uniqueDates.includes(format(checkDate, 'yyyy-MM-dd'))) {
+              currentStreak++
+              checkDate = subDays(checkDate, 1)
+            }
+          }
+          setStreak(currentStreak)
         }
       } catch (error) {
-        console.error('Error fetching workout stats: ', error)
+        console.error('Error fetching stats:', error)
       }
     }
 
     fetchWorkoutStats()
-  }, [currentView])
+  }, [])
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth)
-    } catch (error) {
-      console.error('Error signing out: ', error)
+  const handleSave = async () => {
+    if (!selectedExercise || !sets || !reps || !weight || !auth.currentUser) {
+      alert('Please fill in all fields')
+      return
     }
-  }
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault()
-    console.log('Saving...') // Debug log
-    if (!selectedExercise || !auth.currentUser) return
 
     setLoading(true)
     try {
       await addDoc(collection(db, 'sessions'), {
-        ownerId: auth.currentUser.uid,
         exerciseName: selectedExercise,
-        sets: Number(sets),
-        reps: Number(reps),
-        weight: Number(weight),
+        sets: parseInt(sets),
+        reps: parseInt(reps),
+        weight: parseFloat(weight),
+        ownerId: auth.currentUser.uid,
         timestamp: new Date(),
         isDeleted: false,
       })
+
       alert('Workout Saved!')
-      // Reset form
       setSets('')
       setReps('')
       setWeight('')
       setSelectedExercise(null)
-      // Navigate back to home
       setCurrentView('home')
+
+      // Refresh statistics (simplified for demo, usually you'd refetch or update state localy)
+      window.location.reload()
     } catch (error) {
-      console.error('Error adding document: ', error)
-      alert('Error saving workout')
+      console.error('Error saving workout:', error)
+      alert('Failed to save workout')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDeleteWorkout = async (workoutId: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this workout?')) return
 
     try {
-      await updateDoc(doc(db, 'sessions', workoutId), {
-        isDeleted: true,
-      })
-      // Refresh the workout history
-      setWorkoutHistory(prev => prev.filter(w => w.id !== workoutId))
+      const docRef = doc(db, 'sessions', id)
+      await updateDoc(docRef, { isDeleted: true })
+      setWorkoutHistory(prev => prev.filter(w => w.id !== id))
       setTotalWorkouts(prev => prev - 1)
     } catch (error) {
-      console.error('Error deleting workout: ', error)
-      alert('Error deleting workout')
+      console.error('Error deleting workout:', error)
     }
   }
 
-  const handleDeleteAccount = async () => {
-    if (!auth.currentUser) return
-
-    const confirmation = prompt('Type "DELETE" to confirm account deletion:')
-    if (confirmation !== 'DELETE') {
-      alert('Account deletion cancelled')
-      return
-    }
-
+  const handleSignOut = async () => {
     try {
-      // Update user document to mark account as deleted
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        accountStatus: 'deleted',
-      })
-      alert('Account marked for deletion. You will be logged out.')
       await signOut(auth)
     } catch (error) {
-      console.error('Error deleting account: ', error)
-      alert('Error deleting account')
+      console.error('Error signing out:', error)
     }
   }
 
-  const getGreeting = () => {
-    const hour = new Date().getHours()
-    if (hour < 12) return 'Good Morning'
-    if (hour < 18) return 'Good Afternoon'
-    return 'Good Evening'
-  }
+  if (currentView === 'workout' && selectedExercise) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4 pb-20">
+        <Button variant="ghost" onClick={() => setSelectedExercise(null)} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Exercises
+        </Button>
 
-  const getUserName = () => {
-    return auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'User'
+        <Card>
+          <CardHeader>
+            <CardTitle>Log Workout: {selectedExercise}</CardTitle>
+            <CardDescription>Enter your sets, reps, and weight</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="sets">Sets</Label>
+              <Input
+                id="sets"
+                type="number"
+                placeholder="0"
+                value={sets}
+                onChange={e => setSets(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reps">Reps</Label>
+              <Input
+                id="reps"
+                type="number"
+                placeholder="0"
+                value={reps}
+                onChange={e => setReps(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="weight">Weight (kg)</Label>
+              <Input
+                id="weight"
+                type="number"
+                placeholder="0"
+                value={weight}
+                onChange={e => setWeight(e.target.value)}
+              />
+            </div>
+            <Button className="w-full" onClick={handleSave} disabled={loading}>
+              {loading ? 'Saving...' : 'Save Workout'}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
-    <>
-      {/* Fixed Header */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 items-center justify-between">
-          <div className="font-bold text-xl">GetMoving</div>
-          <Button variant="outline" onClick={handleLogout}>
-            Logout
+    <div className="min-h-screen bg-gray-50 pb-20">
+      {/* Header */}
+      <header className="bg-white border-b p-4 sticky top-0 z-10">
+        <div className="flex justify-between items-center max-w-md mx-auto">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Dumbbell className="text-blue-600" />
+            Hytel Fitness
+          </h1>
+          <Button variant="ghost" size="icon" onClick={() => setCurrentView('settings')}>
+            <Settings className="h-5 w-5" />
           </Button>
         </div>
       </header>
 
-      <div className="container mx-auto p-6 max-w-4xl">
-        {/* HOME VIEW */}
+      <main className="p-4 max-w-md mx-auto space-y-6">
         {currentView === 'home' && (
-          <div className="space-y-6">
-            {/* Greeting Header with Settings */}
-            <div className="text-center space-y-2 relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-0 top-0"
-                onClick={() => setCurrentView('settings')}
-              >
-                <Settings className="h-5 w-5" />
-              </Button>
-              <h1 className="text-4xl font-bold">
-                {getGreeting()}, {getUserName()}
-              </h1>
-              <p className="text-muted-foreground">Ready to crush your fitness goals?</p>
-            </div>
+          <>
+            <section className="grid grid-cols-2 gap-4">
+              <Card className="bg-blue-50 border-blue-100">
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <Activity className="text-blue-600 h-5 w-5" />
+                    <span className="text-2xl font-bold">{totalWorkouts}</span>
+                  </div>
+                  <p className="text-xs text-blue-600 font-medium">Total Workouts</p>
+                </CardContent>
+              </Card>
+              <Card className="bg-orange-50 border-orange-100">
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <Trophy className="text-orange-600 h-5 w-5" />
+                    <span className="text-2xl font-bold">{streak}</span>
+                  </div>
+                  <p className="text-xs text-orange-600 font-medium">Day Streak</p>
+                </CardContent>
+              </Card>
+            </section>
 
-            {/* Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="p-6">
-                <CardHeader className="p-0 pb-2">
-                  <CardDescription className="text-sm">Total Workouts</CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="flex items-center gap-2">
-                    <Trophy className="h-5 w-5 text-yellow-500" />
-                    <span className="text-3xl font-bold">{totalWorkouts}</span>
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider">
+                Quick Stats
+              </h2>
+              <Card>
+                <CardContent className="divide-y p-0">
+                  <div className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Footprints className="text-green-600" />
+                      <div>
+                        <p className="text-sm font-medium">Last Session</p>
+                        <p className="text-xs text-gray-500">
+                          {lastActive ? format(lastActive, 'MMM d, yyyy') : 'No workouts yet'}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
+            </section>
 
-              <Card className="p-6">
-                <CardHeader className="p-0 pb-2">
-                  <CardDescription className="text-sm">Streak</CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="flex items-center gap-2">
-                    <Activity className="h-5 w-5 text-orange-500" />
-                    <span className="text-3xl font-bold">3 Days</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="p-6">
-                <CardHeader className="p-0 pb-2">
-                  <CardDescription className="text-sm">Last Active</CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="text-2xl font-bold">
-                    {lastActive ? format(lastActive, 'MMM d') : 'N/A'}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Main Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-              <Card
-                className="p-6 cursor-pointer transition-all hover:shadow-lg hover:scale-105 border-2 border-primary bg-primary/5"
-                onClick={() => setCurrentView('workout')}
-              >
-                <CardContent className="p-0 flex flex-col items-center justify-center gap-4 min-h-[200px]">
-                  <div className="p-4 rounded-full bg-primary/10">
-                    <Dumbbell className="h-12 w-12 text-primary" />
-                  </div>
-                  <div className="text-center">
-                    <h3 className="text-2xl font-bold">Start Workout</h3>
-                    <p className="text-muted-foreground mt-2">Begin your training session</p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card
-                className="p-6 cursor-pointer transition-all hover:shadow-lg hover:scale-105 border-2"
-                onClick={() => setCurrentView('history')}
-              >
-                <CardContent className="p-0 flex flex-col items-center justify-center gap-4 min-h-[200px]">
-                  <div className="p-4 rounded-full bg-muted">
-                    <History className="h-12 w-12" />
-                  </div>
-                  <div className="text-center">
-                    <h3 className="text-2xl font-bold">View History</h3>
-                    <p className="text-muted-foreground mt-2">Track your progress</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        )}
-
-        {/* WORKOUT VIEW */}
-        {currentView === 'workout' && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCurrentView('home')}
-                className="gap-2"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Back to Hub
-              </Button>
-            </div>
-
-            <h1 className="text-3xl font-bold text-center">Start Workout</h1>
-
-            {/* Active Timer */}
             <ActiveSession />
 
-            <Tabs defaultValue="upper" className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-8">
-                <TabsTrigger value="upper" className="gap-2">
-                  <Dumbbell className="h-4 w-4" />
-                  Upper Body
-                </TabsTrigger>
-                <TabsTrigger value="abs" className="gap-2">
-                  <Activity className="h-4 w-4" />
-                  Abs
-                </TabsTrigger>
-                <TabsTrigger value="legs" className="gap-2">
-                  <Footprints className="h-4 w-4" />
-                  Legs
-                </TabsTrigger>
+            <Button
+              size="lg"
+              className="w-full h-14 text-lg"
+              onClick={() => setCurrentView('workout')}
+            >
+              Start Workout
+            </Button>
+          </>
+        )}
+
+        {currentView === 'workout' && (
+          <div className="space-y-6">
+            <Button variant="ghost" onClick={() => setCurrentView('home')} className="-ml-2">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Home
+            </Button>
+
+            <Tabs defaultValue="upper">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="upper">Upper</TabsTrigger>
+                <TabsTrigger value="abs">Abs</TabsTrigger>
+                <TabsTrigger value="legs">Legs</TabsTrigger>
               </TabsList>
 
-              {Object.entries(EXERCISES).map(([category, exercises]) => (
-                <TabsContent key={category} value={category} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {exercises.map(exercise => (
+              {(Object.keys(EXERCISES) as Array<keyof typeof EXERCISES>).map(category => (
+                <TabsContent key={category} value={category} className="space-y-4 pt-4">
+                  <div className="grid grid-cols-1 gap-3">
+                    {EXERCISES[category].map(exercise => (
                       <Card
                         key={exercise.id}
-                        className={`cursor-pointer transition-all hover:bg-accent ${
-                          selectedExercise === exercise.exerciseName
-                            ? 'border-primary ring-2 ring-primary'
-                            : ''
-                        }`}
+                        className="cursor-pointer hover:border-blue-300 transition-colors"
                         onClick={() => setSelectedExercise(exercise.exerciseName)}
                       >
-                        <CardHeader className="p-4">
-                          <CardTitle className="text-lg text-center">
-                            {exercise.exerciseName}
-                          </CardTitle>
-                        </CardHeader>
+                        <CardContent className="p-4 flex items-center justify-between">
+                          <span className="font-medium">{exercise.exerciseName}</span>
+                          <Dumbbell className="h-4 w-4 text-gray-300" />
+                        </CardContent>
                       </Card>
                     ))}
                   </div>
                 </TabsContent>
               ))}
             </Tabs>
-
-            {selectedExercise && (
-              <Card className="mt-8 p-6">
-                <CardHeader className="p-0 pb-4">
-                  <CardTitle>Log Workout: {selectedExercise}</CardTitle>
-                  <CardDescription>Enter your stats for this set</CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <form onSubmit={handleSave} className="space-y-4">
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="sets">Sets</Label>
-                        <Input
-                          id="sets"
-                          type="number"
-                          placeholder="0"
-                          value={sets}
-                          onChange={e => setSets(e.target.value)}
-                          required
-                          min="1"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="reps">Reps</Label>
-                        <Input
-                          id="reps"
-                          type="number"
-                          placeholder="0"
-                          value={reps}
-                          onChange={e => setReps(e.target.value)}
-                          required
-                          min="1"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="weight">Weight (lbs)</Label>
-                        <Input
-                          id="weight"
-                          type="number"
-                          placeholder="0"
-                          value={weight}
-                          onChange={e => setWeight(e.target.value)}
-                          required
-                          min="0"
-                        />
-                      </div>
-                    </div>
-                    <Button type="submit" className="w-full" disabled={loading}>
-                      {loading ? 'Saving...' : 'Save Workout'}
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-            )}
           </div>
         )}
 
-        {/* HISTORY VIEW */}
         {currentView === 'history' && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCurrentView('home')}
-                className="gap-2"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Back to Hub
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold">Workout History</h2>
+              <Button variant="ghost" size="sm" onClick={() => setCurrentView('home')}>
+                Back
               </Button>
             </div>
 
-            <h1 className="text-3xl font-bold text-center">Workout History</h1>
-
             <div className="space-y-4">
               {workoutHistory.length === 0 ? (
-                <Card className="p-6">
-                  <CardContent className="p-0 text-center text-muted-foreground">
-                    No workouts yet. Start your first workout to see it here!
-                  </CardContent>
-                </Card>
+                <div className="text-center py-10 text-gray-500 border rounded-lg bg-white">
+                  <History className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p>No workouts recorded yet.</p>
+                </div>
               ) : (
-                workoutHistory.map(workout => (
-                  <Card key={workout.id} className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-1 flex-1">
-                        <h3 className="font-bold text-lg">{workout.exerciseName}</h3>
-                        <p className="text-sm text-muted-foreground">
-                          {format(workout.timestamp, 'MMMM d, yyyy • h:mm a')}
+                workoutHistory.map(session => (
+                  <Card key={session.id}>
+                    <CardContent className="p-4 flex justify-between items-center">
+                      <div>
+                        <h3 className="font-bold">{session.exerciseName}</h3>
+                        <p className="text-sm text-gray-600">
+                          {session.sets} sets • {session.reps} reps • {session.weight}kg
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {format(session.timestamp, 'MMM d, h:mm a')}
                         </p>
                       </div>
-                      <div className="flex gap-6 text-sm items-center">
-                        <div className="text-center">
-                          <p className="text-muted-foreground">Sets</p>
-                          <p className="font-bold text-lg">{workout.sets}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-muted-foreground">Reps</p>
-                          <p className="font-bold text-lg">{workout.reps}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-muted-foreground">Weight</p>
-                          <p className="font-bold text-lg">{workout.weight} lbs</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteWorkout(workout.id)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => handleDelete(session.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </CardContent>
                   </Card>
                 ))
               )}
@@ -480,45 +382,59 @@ export default function FitnessDashboard() {
           </div>
         )}
 
-        {/* SETTINGS VIEW */}
         {currentView === 'settings' && (
           <div className="space-y-6">
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCurrentView('home')}
-                className="gap-2"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Back to Hub
+            <div className="flex items-center gap-2 mb-2">
+              <Button variant="ghost" size="icon" onClick={() => setCurrentView('home')}>
+                <ArrowLeft className="h-5 w-5" />
               </Button>
+              <h2 className="text-xl font-bold">Settings</h2>
             </div>
 
-            <h1 className="text-3xl font-bold text-center">Settings</h1>
-
-            {/* Danger Zone */}
-            <Card className="p-6 border-destructive">
-              <CardHeader className="p-0 pb-4">
-                <CardTitle className="text-destructive">Danger Zone</CardTitle>
-                <CardDescription>
-                  Irreversible actions that will permanently affect your account
-                </CardDescription>
+            <Card>
+              <CardHeader>
+                <CardTitle>Account</CardTitle>
+                <CardDescription>Signed in as {auth.currentUser?.email}</CardDescription>
               </CardHeader>
-              <CardContent className="p-0">
-                <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Once you delete your account, there is no going back. Please be certain.
-                  </p>
-                  <Button variant="destructive" onClick={handleDeleteAccount} className="w-full">
-                    Delete Account
-                  </Button>
-                </div>
+              <CardContent>
+                <Button variant="destructive" className="w-full" onClick={handleSignOut}>
+                  Sign Out
+                </Button>
               </CardContent>
             </Card>
           </div>
         )}
-      </div>
-    </>
+      </main>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t p-2 z-10">
+        <div className="flex justify-around items-center max-w-md mx-auto">
+          <Button
+            variant="ghost"
+            className={`flex flex-col items-center gap-1 h-auto py-2 ${currentView === 'home' ? 'text-blue-600' : 'text-gray-500'}`}
+            onClick={() => setCurrentView('home')}
+          >
+            <Dumbbell className="h-6 w-6" />
+            <span className="text-[10px]">Home</span>
+          </Button>
+          <Button
+            variant="ghost"
+            className={`flex flex-col items-center gap-1 h-auto py-2 ${currentView === 'history' ? 'text-blue-600' : 'text-gray-500'}`}
+            onClick={() => setCurrentView('history')}
+          >
+            <History className="h-6 w-6" />
+            <span className="text-[10px]">History</span>
+          </Button>
+          <Button
+            variant="ghost"
+            className={`flex flex-col items-center gap-1 h-auto py-2 ${currentView === 'settings' ? 'text-blue-600' : 'text-gray-500'}`}
+            onClick={() => setCurrentView('settings')}
+          >
+            <Settings className="h-6 w-6" />
+            <span className="text-[10px]">Settings</span>
+          </Button>
+        </div>
+      </nav>
+    </div>
   )
 }
